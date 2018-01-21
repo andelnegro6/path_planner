@@ -68,28 +68,30 @@ public:
 
   void cmdSender(int i){
     // for (size_t i=0; i < checkpoints_.size(); ++i){
-      if(abs(DIS[i].orientation) >= 0.05){
+      if(abs(DIS[i].orientation) >= 0.1){
         if(0 <= DIS[i].orientation < pi){
           cmd_vel_msg.angular.z = 0.5;
+          cmd_vel_msg.linear.x = 0;
           pub.publish(cmd_vel_msg);
           ROS_INFO("rotating towards CH c-clockwise");
-          //MAKE CMDVEL.X STOP PUBLISHING
         }else{
           cmd_vel_msg.angular.z = -0.5; //CHECK THIS AND ALSO QUATERNION TRANSFORMATION
+          cmd_vel_msg.linear.x = 0;
           pub.publish(cmd_vel_msg);
           ROS_INFO("rotating towards CH clockwise");
-          //MAKE CMDVEL.X STOP PUBLISHING
         }
       } else {
         // DIS[i].orientation < 0.1, ROB is oriented towards CH, therefore now moves forward
         if(DIS[i].distance >= 0.1){
           ROS_INFO("outside distance: %f, orientation: %f", DIS[i].distance, DIS[i].orientation);
           cmd_vel_msg.linear.x = 0.5;
+          cmd_vel_msg.angular.z = 0;
           pub.publish(cmd_vel_msg);
-          //MAKE CMD.LINEAR STOP PUBLISHING
         } else {
           // reached new checkpoint
-          curCP++;
+          ++curCP;
+          //cmd_vel_msg.linear.x = 0.5;
+          //pub.publish(cmd_vel_msg);
         }
       }
     // }
