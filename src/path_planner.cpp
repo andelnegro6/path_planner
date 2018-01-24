@@ -6,6 +6,9 @@
 #include <nav_msgs/Odometry.h>
 #include "path_planner/CheckpointDistance.h" //NAME & DISTANCE
 #include "geometry_msgs/Twist.h"
+#include "geometry_msgs/Vector3.h"
+#include "geometry_msgs/Quaternion.h"
+#include "tf/transform_datatypes.h"
 #define pi 3.1415
 
 using std::vector;
@@ -19,7 +22,7 @@ public:
   string name;
   double x;
   double y;
-}; //this is only a helper class, to state the name and position of each checkpoint
+};
 
 class CheckpointMonitor{
 public:
@@ -28,54 +31,73 @@ public:
     ros::NodeHandle nh;
     pub = nh.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
     sub = nh.subscribe("/odometry/filtered", 10, &CheckpointMonitor::OdomCallback, this);
+    //quat_sub = nh.subscribe("/tf", 10, &CheckpointMonitor::quatCallback, this);
   }
 
   CheckpointDistance DIS[4];
   int curCP = 0;
   geometry_msgs::Twist cmd_vel_msg;
+/*  void quatCallback(const geometry_msgs::Quaternion msg){
+    tf::Quaternion quat;
+    tf::quaternionMsgToTF(msg, quat);
+    double roll, pitch, yaw;
+    tf::Matrix3x3(quat).getRPY(roll, pitch, yaw);
+    geometry_msgs::Vector3 rpy;
+    rpy.x = roll;
+    rpy.y = pitch;
+    rpy.z = yaw;
+    loopOver(x, y, rpy.z);
+  }*/
 
   void OdomCallback(const nav_msgs::Odometry::ConstPtr& msg){
     double x = msg->pose.pose.position.x;
     double y = msg->pose.pose.position.y;
-    double alpha = msg->pose.pose.orientation.z;
-    double phi = msg->pose.pose.orientation.w;
-    loopOver(x, y, alpha, phi);
+    double qx= msg->pose.pose.orientation.x;
+    double qy= msg->pose.pose.orientation.y;
+    double qz= msg->pose.pose.orientation.z;
+    double qw= msg->pose.pose.orientation.w;
+    tf::Quaternion bt = tf::Quaternion(qx, qy, qz, qw);
+    double roll, pitch, yaw;
+    tf::Matrix3x3(bt).getRPY(roll, pitch, yaw);
+    geometry_msgs::Vector3 rpy;
+    rpy.x = roll;
+    rpy.y = pitch;
+    rpy.z = yaw;
+    loopOver(x, y, yaw);
   }
 
-  void lockOnCheckpoint(double x, double y, double alpha, double phi, int i){
-    // for (size_t i = 0; i < checkpoints_.size(); ++i){
-      const Checkpoint& checkpoint = checkpoints_[i];
-      double xc = checkpoint.x - x;
-      double yc = checkpoint.y - y;
-      double theta = atan(yc/xc);
-      DIS[i].distance = sqrt(xc*xc + yc*yc);
-      DIS[i].name = "Checkpoint " + i;
-      //transformation of orientation from quaternion to radians:
-      double siny = +2.0 * (alpha*phi);
-      double cosy = 1;
-      double alpha_rad = atan2(siny, cosy);
-      DIS[i].orientation = alpha_rad - theta;
-      ROS_INFO("Inside distance: %f, orientation: %f", DIS[i].distance, DIS[i].orientation);
-    // } this is being printed out (this ros info thing), but no command sent to the robot
-  }
-
-  void loopOver(double x, double y, double alpha, double phi) {
+  void loopOver(double x, double y, double yaw) {
     if (curCP < checkpoints_.size() ) {
-      lockOnCheckpoint(x, y, alpha, phi, curCP);
-      cmdSender(curCP);
+      lockOnCheckpoint(x, y, yaw, curCP);
+      cmdSender(curCP, yaw);
     }
   }
 
-  void cmdSender(int i){
+  void lockOnCheckpoint(double x, double y, double yaw, int i){
+      const Checkpoint& checkpoint = checkpoints_[i];
+      double xc = checkpoint.x - x;
+      double yc = checkpoint.y - y;
+      DIS[i].distance = sqrt(xc*xc + yc*yc);
+      DIS[i].name = "Checkpoint " + i;
+      double theta = atan2(yc, xc);
+      // double siny = +2.0 * (alpha*phi);
+      // double cosy = 1;
+      // double alpha_rad = atan2( siny, cosy);
+      DIS[i].orientation = theta - yaw;
+      ROS_INFO("DIS[i]: %f, yaw: %f, theta: %f, DIS[i].orientation: %f",
+      DIS[i].distance, yaw, theta, DIS[i].orientation);
+  }
+
+  void cmdSender(int i, double yaw){
     // for (size_t i=0; i < checkpoints_.size(); ++i){
-      if(abs(DIS[i].orientation) >= 0.1){
-        if(0 <= DIS[i].orientation < pi){
-          cmd_vel_msg.angular.z = 0.5;
+      if(DIS[i].orientation >= 0.1 || DIS[i].orientation < -0.1){
+        if(0.01 <= DIS[i].orientation < pi){
+          cmd_vel_msg.angular.z = 0.4;
           cmd_vel_msg.linear.x = 0;
           pub.publish(cmd_vel_msg);
           ROS_INFO("rotating towards CH c-clockwise");
         }else{
-          cmd_vel_msg.angular.z = -0.5; //CHECK THIS AND ALSO QUATERNION TRANSFORMATION
+          cmd_vel_msg.angular.z = -0.4;
           cmd_vel_msg.linear.x = 0;
           pub.publish(cmd_vel_msg);
           ROS_INFO("rotating towards CH clockwise");
@@ -83,20 +105,20 @@ public:
       } else {
         // DIS[i].orientation < 0.1, ROB is oriented towards CH, therefore now moves forward
         if(DIS[i].distance >= 0.1){
-          ROS_INFO("outside distance: %f, orientation: %f", DIS[i].distance, DIS[i].orientation);
-          cmd_vel_msg.linear.x = 0.5;
+          ROS_INFO("Distance to CH: %f, orientation: %f", DIS[i].distance, DIS[i].orientation);
           cmd_vel_msg.angular.z = 0;
+          cmd_vel_msg.linear.x = 0.5;
           pub.publish(cmd_vel_msg);
         } else {
           // reached new checkpoint
-          ++curCP;
+          curCP++;
           //cmd_vel_msg.linear.x = 0.5;
           //pub.publish(cmd_vel_msg);
         }
       }
-    // }
-  }
-//http://wiki.ros.org/topic_tools/mux
+     }
+  //}
+
 private:
   vector<Checkpoint> checkpoints_;
 
